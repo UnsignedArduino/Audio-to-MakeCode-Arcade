@@ -1,9 +1,10 @@
+import struct
 from argparse import ArgumentParser
 from pathlib import Path
-import scipy
+
 import numpy as np
-import struct
-from tqdm import trange, tqdm
+import scipy
+from tqdm import trange
 
 parser = ArgumentParser(description="Convert audio to MakeCode Arcade hex buffers!")
 parser.add_argument("-i", "--input", metavar="PATH", type=Path, required=True,
@@ -12,7 +13,7 @@ parser.add_argument("-o", "--output", metavar="PATH", type=Path,
                     required=False,
                     help="The output TypeScript file which contains MakeCode Arcade "
                          "code.")
-parser.add_argument("-p", "--period", metavar="MILLISECONDS", type=int, default=20,
+parser.add_argument("-p", "--period", metavar="MILLISECONDS", type=int, default=25,
                     help="The period in milliseconds between each DFT for the spectrogram.")
 args = parser.parse_args()
 
@@ -42,24 +43,24 @@ def constrain(value, min_value, max_value):
     return min(max(value, min_value), max_value)
 
 
-# def create_sound_instruction(freq: int, duration: int, volume: int) -> str:
-#     """
-#     Generate a MakeCode Arcade sound instruction.
-#
-#     :param freq: Frequency of the sound.
-#     :param duration: Duration of the sound.
-#     :param volume: Volume of the sound, max is 1024.
-#     :return: MakeCode Arcade sound instruction hex string buffer literal.
-#     """
-#     return struct.pack("<BBHHHHH",
-#                        3,  # waveform (8 bits)
-#                        0,  # unused (8 bits)
-#                        freq,  # start frequency in hz (16 bits)
-#                        duration, # duration in ms (16 bits)
-#                        constrain(volume, 0, 1024), # start volume (16 bits)
-#                        constrain(volume, 0, 1024), # end volume (16 bits)
-#                        freq # end frequency in hz (16 bits)
-#                        ).hex()
+def create_sound_instruction(freq: int, duration: int, volume: int) -> str:
+    """
+    Generate a MakeCode Arcade sound instruction.
+
+    :param freq: Frequency of the sound.
+    :param duration: Duration of the sound.
+    :param volume: Volume of the sound, max is 1024.
+    :return: MakeCode Arcade sound instruction hex string buffer literal.
+    """
+    return struct.pack("<BBHHHHH",
+                       3,  # sine waveform (8 bits)
+                       0,  # unused (8 bits)
+                       freq,  # start frequency in hz (16 bits)
+                       duration,  # duration in ms (16 bits)
+                       constrain(volume, 0, 1024),  # start volume (16 bits)
+                       constrain(volume, 0, 1024),  # end volume (16 bits)
+                       freq  # end frequency in hz (16 bits)
+                       ).hex()
 
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
@@ -73,8 +74,10 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     """
     spectrogram_frequency = period / 1000
     if can_log:
-        print(f"Generating spectrogram with a period of {period} ms. (nperseg = {round(spectrogram_frequency * sample_rate)})")
-    f, t, Sxx = scipy.signal.spectrogram(data, sample_rate, nperseg=round(spectrogram_frequency * sample_rate))
+        print(
+            f"Generating spectrogram with a period of {period} ms. (nperseg = {round(spectrogram_frequency * sample_rate)})")
+    f, t, Sxx = scipy.signal.spectrogram(data, sample_rate, nperseg=round(
+        spectrogram_frequency * sample_rate))
 
     max_freqs = 20
     print(f"Gathering {max_freqs} loudest frequencies and amplitudes")
@@ -83,46 +86,20 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_frequencies = f[loudest_indices]
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])]
 
-    code = f"const period = {period};\n"
-    code += "const frequencies = [\n"
-    for i in trange(len(t)):
-        code += "    ["
-        for j in range(max_freqs):
-            freq = round(loudest_frequencies[j, i])
-            # amp = round(loudest_amplitudes[j, i] / 2 ** 15 * 255)
-            # code += create_sound_instruction(freq, period, amp)
-            code += f"{freq}, "
-        code += "],\n"
-    code += "];\n"
-    code += "const amplitudes = [\n"
-    for i in trange(len(t)):
-        code += "    ["
-        for j in range(max_freqs):
-            # freq = round(loudest_frequencies[j, i])
-            amp = round(loudest_amplitudes[j, i] / 2 ** 15 * 255)
-            # code += create_sound_instruction(freq, period, amp)
-            code += f"{amp}, "
-        code += "],\n"
+    code = f"const instructionLines = [\n"
+    for i in trange(max_freqs):
+        code += "    hex`"
+        for j in range(len(t)):
+            freq = round(loudest_frequencies[i, j])
+            amp = round(loudest_amplitudes[i, j] / 2 ** 15 * 1024)
+            code += create_sound_instruction(freq, period, amp)
+        code += "`,\n"
     code += "];"
+
     code += """
 
-for (let i = 0; i < frequencies.length; i += 1) {
-    info.setScore(i);
-    const freqs = frequencies[i];
-    const amps = amplitudes[i];
-    for (let j = 0; j < freqs.length; j++) {
-        music.play(
-            music.createSoundEffect(
-                WaveShape.Sine,
-                freqs[j], freqs[j],
-                amps[j], amps[j],
-                period,
-                SoundExpressionEffect.None,
-                InterpolationCurve.Linear
-            ),
-            j == freqs.length - 1 ? music.PlaybackMode.UntilDone : music.PlaybackMode.InBackground
-        );
-    }
+for (const instructions of instructionLines) {
+    music.playInstructions(100, instructions);
 }
 """
 
