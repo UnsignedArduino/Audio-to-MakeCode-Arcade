@@ -43,23 +43,26 @@ def constrain(value, min_value, max_value):
     return min(max(value, min_value), max_value)
 
 
-def create_sound_instruction(freq: int, duration: int, volume: int) -> str:
+def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
+                             end_vol: int, duration: int) -> str:
     """
     Generate a MakeCode Arcade sound instruction.
 
-    :param freq: Frequency of the sound.
+    :param start_freq: Start frequency of the sound.
+    :param end_freq: Ending frequency of the sound.
+    :param start_vol: Start volume of the sound.
+    :param end_vol: Ending volume of the sound.
     :param duration: Duration of the sound.
-    :param volume: Volume of the sound, max is 1024.
     :return: MakeCode Arcade sound instruction hex string buffer literal.
     """
     return struct.pack("<BBHHHHH",
                        3,  # sine waveform (8 bits)
                        0,  # unused (8 bits)
-                       freq,  # start frequency in hz (16 bits)
+                       max(start_freq, 1),  # start frequency in hz (16 bits)
                        duration,  # duration in ms (16 bits)
-                       constrain(volume, 0, 1024),  # start volume (16 bits)
-                       constrain(volume, 0, 1024),  # end volume (16 bits)
-                       freq  # end frequency in hz (16 bits)
+                       constrain(start_freq, 0, 1024),  # start volume (16 bits)
+                       constrain(end_freq, 0, 1024),  # end volume (16 bits)
+                       max(end_freq, 1)  # end frequency in hz (16 bits)
                        ).hex()
 
 
@@ -92,7 +95,9 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         for j in range(len(t)):
             freq = round(loudest_frequencies[i, j])
             amp = round(loudest_amplitudes[i, j] / 2 ** 15 * 1024)
-            code += create_sound_instruction(freq, period, amp)
+            prevAmp = round(
+                loudest_amplitudes[i, j - 1] / 2 ** 15 * 1024) if j > 0 else amp
+            code += create_sound_instruction(freq, freq, prevAmp, amp, period)
         code += "`,\n"
     code += "];"
 
